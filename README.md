@@ -1,7 +1,5 @@
 # Agentic-Lineage-tracker-MCP
 
-Lineage Tracking Agent
-
 An AI-powered data lineage tracking system that analyzes SQL queries from a Snowflake database and automatically builds a lineage graph across Bronze → Silver → Gold layers in a medallion architecture.
 
 The agent classifies tables, detects relationships between them, and continuously updates a lineage graph for monitoring and analytics.
@@ -284,9 +282,3 @@ Data impact analysis
 Compliance and auditing
 
 Data catalog automation
-
-
-
-That would make the repo look like a serious AI/ML engineering project.
-
-Sources
