@@ -1,284 +1,214 @@
-# Agentic-Lineage-tracker-MCP
+# Data Lineage Tracking Agent
 
-An AI-powered data lineage tracking system that analyzes SQL queries from a Snowflake database and automatically builds a lineage graph across Bronze → Silver → Gold layers in a medallion architecture.
+An AI-powered agent that analyzes Snowflake query history to automatically classify tables into **Bronze**, **Silver**, and **Gold** medallion layers and maintains a live data lineage graph across the entire pipeline.
 
-The agent classifies tables, detects relationships between them, and continuously updates a lineage graph for monitoring and analytics.
+---
 
-Project Reference: 
+## Table of Contents
 
-Lineage_tracker
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [Agents](#agents)
+- [Tech Stack](#tech-stack)
+- [Getting Started](#getting-started)
+- [How It Works](#how-it-works)
+- [Project Structure](#project-structure)
+- [References](#references)
 
-Overview
+---
 
-Modern data pipelines often follow the Medallion Architecture:
+## Overview
 
-Bronze Layer → Raw ingested data
+In a Snowflake medallion architecture, data flows through three stages:
 
-Silver Layer → Cleaned and transformed data
+| Layer | Description |
+|-------|-------------|
+| **Bronze** | Raw, unprocessed data. Schema mirrors the source. May contain missing or incorrect values. |
+| **Silver** | Cleaned, filtered, and integrated data in a consistent format for business analytics. |
+| **Gold** | Aggregated, curated, single source of truth for business intelligence. |
 
-Gold Layer → Aggregated business-ready data
+This agent monitors SQL query history in Snowflake to:
+- **Classify** each table into its appropriate medallion layer
+- **Map data flow** between tables as a directed acyclic graph (DAG)
+- **Maintain a lineage graph** where each table is a node and data relationships are edges
 
-This project builds an AI Agent that automatically identifies these layers and tracks data movement between tables by analyzing SQL query logs.
+---
 
-The output is a data lineage graph where:
+## Architecture
 
-Each table = node
+### Minimal Architecture
 
-Each data flow = edge
+```
+Raw Data Source
+      |
+      v
+[Bronze Tables] --> Changelog -->
+[Silver Tables] --> Changelog -->  Client MCP Server --> fetch() --> iceDQ Agent
+[Gold Tables]   --> Changelog -->
+                                          |
+                        +-----------------+-----------------+
+                        v                 v                 v
+                   SQL Query Parser    LLM (Classifier)   Graph API
+                   (sqlglot)           (LangChain)        (NetworkX / Neo4j)
+                                          |
+                                   Graph Visualizer
+```
 
-This helps data engineers understand how data moves across the system.
+### Multi-Agent Architecture
 
-Key Features
+The system is orchestrated on **LangGraph** with AIOps monitoring on **LangSmith**. Three specialized agents collaborate:
 
-Automated SQL query analysis
+```
+Start --> [Data Agent] --> [Query Agent] --> [Graph Agent] --> [BI Node]
+               |                |                  |
+          iceDQ Node        Feedback           Feedback &
+                             Node            Validation Node
+```
 
-AI-based table classification
+---
 
-Data lineage graph generation
+## Agents
 
-Snowflake query history integration
+### 1. Data Agent (Information Gathering)
 
-Multi-agent architecture for scalability
+Periodically polls the client MCP server (via Snowflake's `QUERY_HISTORY`) to determine when to fetch new query batches. Triggers the Query Agent and logs decisions to a feedback node.
 
-Graph visualization support
+**Tools:**
+- `poll.py` - Polls LLM with historical time logs and cost-per-execution data to decide when to fetch
+- `trigger.py` - Fetches new query data and notifies the LLM
+- `logger.py` - Logs LLM decisions to the feedback node
+- `query_agent_activator.py` - Activates the Query Agent
 
-PII masking before LLM processing
+**Optional enhancements:**
+- ML-based optimization of fetch timing vs. execution cost
+- Seasonal trend detection in query volume
 
-Real-time lineage updates
+---
 
-Architecture
+### 2. Query Agent (Tool Usage Agent)
 
-The system consists of multiple agents responsible for different tasks:
+Receives raw queries, sanitizes PII/sensitive data, builds a table alias map, and uses an LLM to classify each query's target table as Bronze, Silver, or Gold. Also identifies source and destination tables for lineage edges.
 
-Data Agent
+**Tools:**
+- `sql_parser.py` - Parses SQL queries into atomic units, removes PII, maintains alias table, triggers LLM
+- `logger.py` - Logs LLM classification decisions
+- `graph_agent_activator.py` - Triggers the Graph Agent
 
-Responsible for collecting query history from Snowflake.
+---
 
-Functions:
+### 3. Graph Agent (Environment Interaction Agent)
 
-Poll query logs
+Receives classification inferences and alias details from the Query Agent. Decides whether to create new nodes or update existing table categories, then instructs the BI node to apply changes to the lineage graph.
 
-Trigger query processing
+**Tools:**
+- `poll.py` - Polls LLM with alias table and inference history to decide on graph updates
+- `update_graph.py` - Applies changes to the lineage graph
+- `logger.py` - Logs all decisions to feedback node
 
-Detect high-volume query periods
+---
 
-Send logs to Query Agent
+## Tech Stack
 
-Query Agent
+| Component | Technology |
+|-----------|------------|
+| Orchestration | [LangGraph](https://www.langchain.com/langgraph) |
+| AIOps / Monitoring | [LangSmith](https://www.langchain.com/langsmith) |
+| LLM Framework | [LangChain](https://www.langchain.com/) |
+| SQL Parsing | [sqlglot](https://github.com/tobymao/sqlglot) |
+| Lineage Graph | [NetworkX](https://networkx.org/) / [Neo4j](https://neo4j.com/) |
+| Data Source | [Snowflake](https://www.snowflake.com/) (`QUERY_HISTORY`) |
+| MCP Server | Custom client MCP server |
 
-Responsible for query analysis and classification.
+---
 
-Functions:
+## Getting Started
 
-SQL parsing
+### Prerequisites
 
-Alias resolution
+- Python 3.10+
+- Snowflake account with `QUERY_HISTORY` access
+- API keys for your chosen LLM provider
+- Neo4j instance (or NetworkX for local graph)
 
-PII masking
+### Installation
 
-Table classification using LLM
-
-Source → Target table detection
-
-Graph Agent
-
-Responsible for maintaining the lineage graph.
-
-Functions:
-
-Create graph nodes for tables
-
-Create edges for table dependencies
-
-Update table categories
-
-Maintain graph state
-
-System Workflow
-
-Query history is fetched from Snowflake using QUERY_HISTORY API.
-
-Queries are cleaned and parsed.
-
-Sensitive information is removed.
-
-Queries are sent to an LLM for classification.
-
-The LLM determines:
-
-Table category (Bronze/Silver/Gold)
-
-Source tables
-
-Target tables
-
-Graph Agent updates the lineage graph.
-
-Graph can be visualized via a Graph API or BI tools.
-
-The workflow illustrated in the architecture diagram (page 3 of the document) shows agents orchestrated through LangGraph and LangSmith monitoring. 
-
-Lineage_tracker
-
-Table Classification Logic
-
-The system uses query behavior to infer table layers.
-
-Bronze Tables
-
-Raw ingestion
-
-Unstructured or incomplete data
-
-Heavy transformation queries
-
-Example patterns:
-
-INSERT INTO bronze_table
-SELECT * FROM raw_source
-Silver Tables
-
-Cleaned and structured datasets
-
-Data integrated from multiple sources
-
-Example patterns:
-
-INSERT INTO silver_table
-SELECT cleaned_data FROM bronze_table
-Gold Tables
-
-Aggregated datasets
-
-Business reporting tables
-
-Analytical queries
-
-Example patterns:
-
-SELECT SUM(sales) FROM silver_table
-GROUP BY region
-Technology Stack
-Component	Technology
-LLM	OpenAI / SQLCoder / CodeQwen
-Orchestration	LangGraph
-Monitoring	LangSmith
-SQL Parsing	SQLGlot
-Graph Database	Neo4j / NetworkX
-Data Source	Snowflake
-Backend	Python
-Visualization	Graph UI / BI Tools
-Project Structure
-lineage-tracking-agent/
-│
-├── agents/
-│   ├── data_agent.py
-│   ├── query_agent.py
-│   └── graph_agent.py
-│
-├── parsers/
-│   └── sql_parser.py
-│
-├── graph/
-│   ├── update_graph.py
-│   └── graph_schema.py
-│
-├── utils/
-│   ├── logger.py
-│   └── pii_masking.py
-│
-├── config/
-│   └── config.yaml
-│
-├── main.py
-└── README.md
-Example Lineage Graph
-
-Example lineage flow:
-
-Raw_Source
-     │
-     ▼
-Bronze_Table
-     │
-     ▼
-Silver_Table
-     │
-     ▼
-Gold_Table
-
-Graph Representation:
-
-Raw_Source → Bronze → Silver → Gold
-Installation
-
-Clone the repository
-
-git clone https://github.com/yourusername/lineage-tracking-agent.git
-
-Navigate to project directory
-
-cd lineage-tracking-agent
-
-Install dependencies
-
+```bash
+git clone https://github.com/your-org/lineage-tracker.git
+cd lineage-tracker
 pip install -r requirements.txt
-Configuration
+```
 
-Set the following environment variables:
+### Configuration
 
-SNOWFLAKE_ACCOUNT=
-SNOWFLAKE_USER=
-SNOWFLAKE_PASSWORD=
-SNOWFLAKE_DATABASE=
+```bash
+cp .env.example .env
+# Fill in your Snowflake credentials, LLM API keys, and graph DB connection
+```
 
-OPENAI_API_KEY=
-Running the Agent
+### Running the Agent
 
-Start the lineage agent
-
+```bash
+# Start the full multi-agent pipeline
 python main.py
 
-The system will:
+# Or trigger the Data Agent manually for an initial query dump
+python agents/data_agent/trigger.py --manual
+```
 
-Fetch query logs
+---
 
-Classify tables
+## How It Works
 
-Update lineage graph
+1. **Fetch** - The Data Agent pulls unprocessed query logs from Snowflake via the client MCP server.
+2. **Parse** - The Query Agent uses `sqlglot` to break query logs into individual SQL statements and strips sensitive data.
+3. **Classify** - An LLM analyzes each query's pattern (INSERT, SELECT, MERGE, etc.) and classifies the target table as Bronze, Silver, or Gold.
+4. **Decide** - The Graph Agent reviews the classification history and decides whether to update a table's category or add a new node.
+5. **Update** - The lineage graph is updated via the Graph API. The BI Node can visualize the graph or revert to a previous version.
+6. **Log** - All agent decisions are recorded in feedback nodes for monitoring and analytics.
 
-Future Improvements
+---
 
-ML-based query pattern classification
+## Project Structure
 
-Streaming query ingestion
+```
+lineage-tracker/
+    agents/
+        data_agent/
+            poll.py
+            trigger.py
+            logger.py
+            query_agent_activator.py
+        query_agent/
+            sql_parser.py
+            logger.py
+            graph_agent_activator.py
+        graph_agent/
+            poll.py
+            update_graph.py
+            logger.py
+    graph/
+        lineage_graph.py
+    mcp/
+        snowflake_mcp_server.py
+    config/
+        settings.py
+    main.py
+    requirements.txt
+    .env.example
+    README.md
+```
 
-Real-time lineage monitoring
+---
 
-Integration with Airflow / dbt
+## References
 
-Automated anomaly detection
+- [SQL Coder by Defog.ai](https://huggingface.co/defog/sqlcoder-7b-2) - SQL generation model
+- [CodeQwen Text-to-SQL](https://huggingface.co/Qwen/CodeQwen1.5-7B-Chat) - Code-focused LLM for SQL tasks
+- [Snowflake Column-Level Security](https://docs.snowflake.com/en/user-guide/security-column-intro) - Sensitive information masking in Snowflake
+- [Snowflake QUERY_HISTORY](https://docs.snowflake.com/en/sql-reference/functions/query_history) - Query history access
 
-Graph-based lineage search
+---
 
-Potential Models
+## License
 
-SQLCoder (Defog)
-
-CodeQwen Text-to-SQL
-
-These models can improve SQL understanding and query classification. 
-
-Lineage_tracker
-
-Use Cases
-
-Data warehouse governance
-
-ETL pipeline debugging
-
-Data impact analysis
-
-Compliance and auditing
-
-Data catalog automation
+MIT License. See [LICENSE](LICENSE) for details.
