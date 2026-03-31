@@ -1,49 +1,42 @@
 """
-Shared logger utility.
-Writes structured JSONL entries to the feedback log file and
-also emits to the Python logging system.
+agents/query_agent/logger.py
+Logs Query Agent classification decisions to a JSON feedback file.
 """
-
-from __future__ import annotations
 
 import json
 import logging
 import os
-from datetime import datetime
-from typing import Any, Dict
+from datetime import datetime, timezone
+from typing import Any
 
-from config.settings import settings
+logger = logging.getLogger(__name__)
 
-_log = logging.getLogger(__name__)
+FEEDBACK_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+    "data", "feedback_query_agent.json"
+)
 
 
-def _ensure_dir(path: str) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-
-
-def log_event(agent: str, event_type: str, payload: Dict[str, Any]) -> None:
-    """
-    Append a structured log entry to the feedback JSONL file.
-
-    Args:
-        agent:      Name of the agent emitting the event (e.g. 'data_agent').
-        event_type: Short label (e.g. 'fetch_decision', 'classification', 'graph_update').
-        payload:    Arbitrary dict of event details.
-    """
-    entry = {
-        "timestamp": datetime.utcnow().isoformat(),
-        "agent": agent,
-        "event_type": event_type,
-        **payload,
+def log_decision(event: str, details: dict[str, Any]) -> None:
+    record = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "agent": "query_agent",
+        "event": event,
+        **details,
     }
+    _append(record)
+    logger.debug("[QueryAgent Logger] %s", event)
 
-    # Log to Python logger
-    _log.info("[%s] %s: %s", agent, event_type, json.dumps(payload))
 
-    # Persist to JSONL feedback file
-    try:
-        _ensure_dir(settings.FEEDBACK_LOG_PATH)
-        with open(settings.FEEDBACK_LOG_PATH, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(entry) + "\n")
-    except OSError as exc:
-        _log.warning("Could not write feedback log: %s", exc)
+def _append(record: dict[str, Any]) -> None:
+    os.makedirs(os.path.dirname(FEEDBACK_FILE), exist_ok=True)
+    existing: list = []
+    if os.path.exists(FEEDBACK_FILE):
+        with open(FEEDBACK_FILE, "r") as f:
+            try:
+                existing = json.load(f)
+            except json.JSONDecodeError:
+                existing = []
+    existing.append(record)
+    with open(FEEDBACK_FILE, "w") as f:
+        json.dump(existing, f, indent=2, default=str)
